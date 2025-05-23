@@ -1,25 +1,26 @@
 /**
- * Real API Integration Functions
- * Uses environment variables for secure API key management
+ * Enhanced API Integration with RSS Feeds and Real Data Sources
+ * Supports environment variables for secure API key management
  */
 
 class SecurityAPI {
     constructor() {
+        // Use environment variable for API key (set in GitHub Actions)
+        this.newsApiKey = window.NEWS_API_KEY || 'YOUR_NEWS_API_KEY';
         this.cveBaseUrl = 'https://cve.circl.lu/api';
-        // API key will be injected via GitHub Actions or environment variables
-        this.newsApiKey = this.getApiKey();
         this.newsBaseUrl = 'https://newsapi.org/v2';
-    }
-
-    /**
-     * Get API key from environment or fallback
-     */
-    getApiKey() {
-        // In production, this will be replaced by GitHub Actions
-        // For local development, you can set window.NEWS_API_KEY
-        return window.NEWS_API_KEY || 
-               process.env.NEWS_API_KEY || 
-               'YOUR_NEWS_API_KEY_PLACEHOLDER';
+        
+        // RSS Feed URLs for security news
+        this.rssFeeds = [
+            'https://www.securityweek.com/feed/',
+            'https://feeds.feedburner.com/TheHackersNews',
+            'https://www.bleepingcomputer.com/feed/',
+            'https://krebsonsecurity.com/feed/',
+            'https://threatpost.com/feed/'
+        ];
+        
+        // CORS proxy for RSS feeds (since browsers block cross-origin requests)
+        this.corsProxy = 'https://api.rss2json.com/v1/api.json?rss_url=';
     }
 
     /**
@@ -39,32 +40,102 @@ class SecurityAPI {
     }
 
     /**
-     * Fetch security news from NewsAPI
+     * Fetch security news from RSS feeds
      */
     async fetchSecurityNews(limit = 10) {
         try {
-            // Only fetch real news if we have a valid API key
-            if (this.newsApiKey === 'YOUR_NEWS_API_KEY_PLACEHOLDER') {
-                console.warn('Using mock news data. Set NEWS_API_KEY for real data.');
-                return this.getMockNews();
+            const allNews = [];
+            
+            // Fetch from multiple RSS feeds
+            for (const feedUrl of this.rssFeeds.slice(0, 3)) { // Limit to 3 feeds to avoid rate limits
+                try {
+                    const response = await fetch(`${this.corsProxy}${encodeURIComponent(feedUrl)}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.status === 'ok' && data.items) {
+                            const formattedNews = data.items.slice(0, 3).map(item => ({
+                                title: this.cleanTitle(item.title),
+                                summary: this.cleanSummary(item.description || item.content),
+                                source: this.getSourceName(feedUrl),
+                                time: this.getTimeAgo(item.pubDate),
+                                url: item.link,
+                                publishedAt: item.pubDate
+                            }));
+                            allNews.push(...formattedNews);
+                        }
+                    }
+                } catch (feedError) {
+                    console.warn(`Failed to fetch from ${feedUrl}:`, feedError);
+                }
             }
+            
+            // If RSS feeds fail, try NewsAPI as backup
+            if (allNews.length === 0) {
+                const newsApiData = await this.fetchNewsAPIBackup(limit);
+                allNews.push(...newsApiData);
+            }
+            
+            // Sort by publication date and return limited results
+            return allNews
+                .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt))
+                .slice(0, limit);
+                
+        } catch (error) {
+            console.error('Error fetching RSS news:', error);
+            return this.getMockNews(); // Fallback to mock data
+        }
+    }
 
-            const keywords = 'cybersecurity OR "data breach" OR malware OR "cyber attack" OR "security vulnerability"';
-            const url = `${this.newsBaseUrl}/everything?q=${encodeURIComponent(keywords)}&sortBy=publishedAt&pageSize=${limit}&language=en&apiKey=${this.newsApiKey}`;
+    /**
+     * Clean HTML tags from title
+     */
+    cleanTitle(title) {
+        return title ? title.replace(/<[^>]*>/g, '').trim() : 'No title available';
+    }
+
+    /**
+     * Clean and truncate summary
+     */
+    cleanSummary(summary) {
+        if (!summary) return 'No summary available';
+        
+        // Remove HTML tags and truncate
+        const cleaned = summary.replace(/<[^>]*>/g, '').trim();
+        return cleaned.length > 200 ? cleaned.substring(0, 200) + '...' : cleaned;
+    }
+
+    /**
+     * Get source name from feed URL
+     */
+    getSourceName(feedUrl) {
+        if (feedUrl.includes('securityweek.com')) return 'Security Week';
+        if (feedUrl.includes('thehackersnews.com')) return 'The Hacker News';
+        if (feedUrl.includes('bleepingcomputer.com')) return 'BleepingComputer';
+        if (feedUrl.includes('krebsonsecurity.com')) return 'Krebs on Security';
+        if (feedUrl.includes('threatpost.com')) return 'Threatpost';
+        return 'Security News';
+    }
+
+    /**
+     * Fetch security news from NewsAPI as backup
+     */
+    async fetchNewsAPIBackup(limit = 10) {
+        if (!this.newsApiKey || this.newsApiKey === 'YOUR_NEWS_API_KEY') {
+            return [];
+        }
+        
+        try {
+            const keywords = 'cybersecurity OR "data breach" OR malware OR "cyber attack" OR "vulnerability"';
+            const url = `${this.newsBaseUrl}/everything?q=${encodeURIComponent(keywords)}&sortBy=publishedAt&pageSize=${limit}&apiKey=${this.newsApiKey}`;
             
             const response = await fetch(url);
-            if (!response.ok) {
-                if (response.status === 401) {
-                    throw new Error('Invalid API key');
-                }
-                throw new Error(`API request failed: ${response.status}`);
-            }
+            if (!response.ok) throw new Error('Failed to fetch news from NewsAPI');
             
             const data = await response.json();
-            return this.formatNewsData(data.articles || []);
+            return this.formatNewsData(data.articles);
         } catch (error) {
-            console.error('Error fetching news:', error);
-            return this.getMockNews(); // Fallback to mock data
+            console.error('Error fetching NewsAPI:', error);
+            return [];
         }
     }
 
@@ -83,7 +154,7 @@ class SecurityAPI {
     }
 
     /**
-     * Format news data for display
+     * Format NewsAPI data for display
      */
     formatNewsData(articles) {
         return articles.filter(article => article.title && article.url).map(article => ({
@@ -92,7 +163,7 @@ class SecurityAPI {
             source: article.source.name,
             time: this.getTimeAgo(article.publishedAt),
             url: article.url,
-            image: article.urlToImage
+            publishedAt: article.publishedAt
         }));
     }
 
@@ -114,10 +185,57 @@ class SecurityAPI {
         const date = new Date(dateString);
         const diffMs = now - date;
         const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+        const diffDays = Math.floor(diffHours / 24);
         
         if (diffHours < 1) return 'Just now';
         if (diffHours < 24) return `${diffHours} hours ago`;
-        return `${Math.floor(diffHours / 24)} days ago`;
+        if (diffDays === 1) return '1 day ago';
+        return `${diffDays} days ago`;
+    }
+
+    /**
+     * Enhanced CVE fetching with multiple sources
+     */
+    async fetchLatestCVEs(limit = 10) {
+        try {
+            // Try CVE-Search API first
+            const cveSearchData = await this.fetchCVEs(limit);
+            if (cveSearchData.length > 0) {
+                return cveSearchData;
+            }
+            
+            // Fallback to NIST NVD API
+            const nvdResponse = await fetch('https://services.nvd.nist.gov/rest/json/cves/2.0/?resultsPerPage=' + limit);
+            if (nvdResponse.ok) {
+                const nvdData = await nvdResponse.json();
+                return this.formatNVDData(nvdData.vulnerabilities || []);
+            }
+            
+            return this.getMockCVEs();
+        } catch (error) {
+            console.error('Error fetching latest CVEs:', error);
+            return this.getMockCVEs();
+        }
+    }
+
+    /**
+     * Format NIST NVD data
+     */
+    formatNVDData(vulnerabilities) {
+        return vulnerabilities.map(vuln => {
+            const cve = vuln.cve;
+            const metrics = cve.metrics?.cvssMetricV31?.[0]?.cvssData || cve.metrics?.cvssMetricV2?.[0]?.cvssData;
+            const score = metrics?.baseScore || 0;
+            
+            return {
+                id: cve.id,
+                description: cve.descriptions?.[0]?.value || 'No description available',
+                severity: this.mapCVSSSeverity(score),
+                score: score,
+                published: new Date(cve.published).toLocaleDateString(),
+                url: `https://nvd.nist.gov/vuln/detail/${cve.id}`
+            };
+        });
     }
 
     /**
@@ -162,35 +280,36 @@ class SecurityAPI {
                 summary: "New sophisticated ransomware campaign specifically targeting hospital systems and medical device networks detected by security researchers.",
                 source: "CyberSecNews",
                 time: "2 hours ago",
-                url: "https://www.bleepingcomputer.com/news/security/",
-                image: null
+                url: "https://www.bleepingcomputer.com/news/security/"
             },
             {
                 title: "Zero-Day Exploit Found in Popular VPN Software",
                 summary: "Critical vulnerability allows attackers to bypass authentication and gain unauthorized network access.",
                 source: "Security Weekly",
                 time: "4 hours ago",
-                url: "https://krebsonsecurity.com/",
-                image: null
+                url: "https://krebsonsecurity.com/"
             },
             {
                 title: "AI-Powered Phishing Attacks on the Rise",
                 summary: "Cybercriminals leveraging large language models to create more convincing phishing emails and social engineering attacks.",
                 source: "ThreatPost",
                 time: "6 hours ago",
-                url: "https://thehackernews.com/",
-                image: null
+                url: "https://thehackernews.com/"
             },
             {
                 title: "New Malware Family Targets Cryptocurrency Wallets",
                 summary: "Advanced persistent threat group develops custom malware specifically designed to steal digital assets from hot wallets.",
                 source: "InfoSec News",
                 time: "8 hours ago",
-                url: "https://www.darkreading.com/",
-                image: null
+                url: "https://www.darkreading.com/"
             }
         ];
     }
+}
+
+// Initialize API with environment variables
+if (typeof window !== 'undefined') {
+    window.SecurityAPI = SecurityAPI;
 }
 
 // Export for use in main application
