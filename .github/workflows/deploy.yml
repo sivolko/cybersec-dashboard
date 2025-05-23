@@ -1,0 +1,41 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: |
+        npm install -g lighthouse
+        
+    - name: Run Lighthouse CI
+      run: |
+        lighthouse --output html --output-path ./lighthouse-report.html --chrome-flags="--headless" https://sivolko.github.io/cybersec-dashboard/ || true
+        
+    - name: Deploy to GitHub Pages
+      if: github.ref == 'refs/heads/main'
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./
+        
+    - name: Upload Lighthouse Report
+      uses: actions/upload-artifact@v3
+      with:
+        name: lighthouse-report
+        path: lighthouse-report.html
