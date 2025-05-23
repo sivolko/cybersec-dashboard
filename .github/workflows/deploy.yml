@@ -37,16 +37,16 @@ jobs:
         
     - name: Inject API Keys
       run: |
-        # Create a temporary version of index.html with API key injected
-        sed 's/window\.NEWS_API_KEY || '\''demo-key'\''/'\''${{ secrets.NEWS_API_KEY }}'\'' || '\''demo-key'\''/g' index.html > index_temp.html
-        mv index_temp.html index.html
+        # Create a copy of index.html with API key injected
+        cp index.html index_backup.html
         
-        # Also inject into the API file
-        sed 's/window\.NEWS_API_KEY || '\''demo-key'\''/'\''${{ secrets.NEWS_API_KEY }}'\'' || '\''demo-key'\''/g' assets/js/api.js > assets/js/api_temp.js
-        mv assets/js/api_temp.js assets/js/api.js
+        # Add API key as global variable in index.html before closing </head> tag
+        sed -i 's|</head>|    <script>\n        window.NEWS_API_KEY = "${{ secrets.NEWS_API_KEY }}";\n    </script>\n</head>|g' index.html
         
-        # Add API key as global variable in index.html
-        sed -i 's/<script>/&\n        window.NEWS_API_KEY = '\''${{ secrets.NEWS_API_KEY }}'\'';/g' index.html
+        # Also update the API file to use the injected key
+        sed -i "s|window.NEWS_API_KEY \|\| null|window.NEWS_API_KEY \|\| '${{ secrets.NEWS_API_KEY }}'|g" assets/js/api.js
+        
+        echo "✅ API key injection completed"
         
     - name: Setup Pages
       uses: actions/configure-pages@v4
