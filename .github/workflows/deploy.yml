@@ -6,9 +6,21 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     
     steps:
     - name: Checkout
@@ -23,19 +35,39 @@ jobs:
       run: |
         npm install -g lighthouse
         
-    - name: Run Lighthouse CI
+    - name: Inject API Keys
       run: |
-        lighthouse --output html --output-path ./lighthouse-report.html --chrome-flags="--headless" https://sivolko.github.io/cybersec-dashboard/ || true
+        # Create a temporary version of index.html with API key injected
+        sed 's/window\.NEWS_API_KEY || '\''demo-key'\''/'\''${{ secrets.NEWS_API_KEY }}'\'' || '\''demo-key'\''/g' index.html > index_temp.html
+        mv index_temp.html index.html
+        
+        # Also inject into the API file
+        sed 's/window\.NEWS_API_KEY || '\''demo-key'\''/'\''${{ secrets.NEWS_API_KEY }}'\'' || '\''demo-key'\''/g' assets/js/api.js > assets/js/api_temp.js
+        mv assets/js/api_temp.js assets/js/api.js
+        
+        # Add API key as global variable in index.html
+        sed -i 's/<script>/&\n        window.NEWS_API_KEY = '\''${{ secrets.NEWS_API_KEY }}'\'';/g' index.html
+        
+    - name: Setup Pages
+      uses: actions/configure-pages@v4
+      
+    - name: Upload artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: './.'
         
     - name: Deploy to GitHub Pages
-      if: github.ref == 'refs/heads/main'
-      uses: peaceiris/actions-gh-pages@v3
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./
+      id: deployment
+      uses: actions/deploy-pages@v4
+        
+    - name: Run Lighthouse CI (Post-deployment)
+      run: |
+        # Wait for deployment to be ready
+        sleep 30
+        lighthouse --output html --output-path ./lighthouse-report.html --chrome-flags="--headless" ${{ steps.deployment.outputs.page_url }} || true
         
     - name: Upload Lighthouse Report
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: lighthouse-report
         path: lighthouse-report.html
