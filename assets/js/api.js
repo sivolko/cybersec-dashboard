@@ -1,14 +1,20 @@
 /**
- * Real API Integration Functions
+ * Real API Integration Functions with Dynamic Configuration
  * Uses environment variables for secure API key management
  */
 
 class SecurityAPI {
     constructor() {
         this.cveBaseUrl = 'https://cve.circl.lu/api';
-        // API key will be injected during build process
-        this.newsApiKey = window.NEWS_API_KEY || 'demo-key';
         this.newsBaseUrl = 'https://newsapi.org/v2';
+        
+        // API key will be injected during build process
+        this.newsApiKey = window.NEWS_API_KEY || null;
+        
+        // If no API key available, warn and use mock data
+        if (!this.newsApiKey) {
+            console.warn('NewsAPI key not configured. Using mock data for news feed.');
+        }
     }
 
     /**
@@ -28,27 +34,34 @@ class SecurityAPI {
     }
 
     /**
-     * Fetch security news from NewsAPI
+     * Fetch security news from NewsAPI or fallback to mock data
      */
     async fetchSecurityNews(limit = 10) {
+        // If no API key, use mock data
+        if (!this.newsApiKey) {
+            console.log('Using mock news data (API key not available)');
+            return this.getMockNews();
+        }
+
         try {
-            // Use real API if key is available
-            if (this.newsApiKey && this.newsApiKey !== 'demo-key') {
-                const keywords = 'cybersecurity OR "data breach" OR malware OR "cyber attack"';
-                const url = `${this.newsBaseUrl}/everything?q=${encodeURIComponent(keywords)}&sortBy=publishedAt&pageSize=${limit}&apiKey=${this.newsApiKey}`;
-                
-                const response = await fetch(url);
-                if (response.ok) {
-                    const data = await response.json();
-                    return this.formatNewsData(data.articles);
-                }
+            const keywords = 'cybersecurity OR "data breach" OR malware OR "cyber attack" OR "security vulnerability"';
+            const url = `${this.newsBaseUrl}/everything?q=${encodeURIComponent(keywords)}&sortBy=publishedAt&pageSize=${limit}&language=en&apiKey=${this.newsApiKey}`;
+            
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`NewsAPI error: ${response.status} ${response.statusText}`);
             }
             
-            // Fallback to mock data if API fails or no key
-            console.log('Using mock news data - API key not configured or API unavailable');
-            return this.getMockNews();
+            const data = await response.json();
+            
+            if (data.status === 'error') {
+                throw new Error(`NewsAPI error: ${data.message}`);
+            }
+            
+            return this.formatNewsData(data.articles);
         } catch (error) {
             console.error('Error fetching news:', error);
+            console.log('Falling back to mock news data');
             return this.getMockNews(); // Fallback to mock data
         }
     }
@@ -70,9 +83,18 @@ class SecurityAPI {
      * Format news data for display
      */
     formatNewsData(articles) {
-        return articles.slice(0, 10).map(article => ({
+        // Filter out articles with invalid or missing data
+        const validArticles = articles.filter(article => 
+            article.title && 
+            article.title !== '[Removed]' && 
+            article.description &&
+            article.source &&
+            article.source.name
+        );
+
+        return validArticles.map(article => ({
             title: article.title,
-            summary: article.description || article.content?.substring(0, 200) + '...' || 'No summary available',
+            summary: article.description?.substring(0, 200) + (article.description?.length > 200 ? '...' : ''),
             source: article.source.name,
             time: this.getTimeAgo(article.publishedAt),
             url: article.url
@@ -104,101 +126,91 @@ class SecurityAPI {
     }
 
     /**
-     * Enhanced mock CVE data (fallback)
+     * Mock CVE data (fallback)
      */
     getMockCVEs() {
-        const today = new Date().toLocaleDateString();
-        const yesterday = new Date(Date.now() - 86400000).toLocaleDateString();
-        
         return [
             {
-                id: "CVE-2024-5001",
-                description: "Critical remote code execution vulnerability in Apache HTTP Server allows attackers to execute arbitrary code via malformed request headers.",
+                id: "CVE-2024-0001",
+                description: "Critical buffer overflow vulnerability in OpenSSL allows remote code execution through malformed certificates.",
                 severity: "critical",
                 score: 9.8,
-                published: today
+                published: new Date().toLocaleDateString()
             },
             {
-                id: "CVE-2024-5002", 
-                description: "SQL injection vulnerability in WordPress plugin allows unauthorized database access and potential data exfiltration.",
+                id: "CVE-2024-0002", 
+                description: "SQL injection vulnerability in popular CMS allows unauthorized database access.",
                 severity: "high",
                 score: 8.1,
-                published: today
+                published: new Date().toLocaleDateString()
             },
             {
-                id: "CVE-2024-5003",
-                description: "Cross-site scripting (XSS) vulnerability in popular JavaScript framework enables client-side code injection.",
+                id: "CVE-2024-0003",
+                description: "Cross-site scripting (XSS) vulnerability in web application framework.",
                 severity: "medium",
                 score: 6.5,
-                published: yesterday
+                published: new Date(Date.now() - 86400000).toLocaleDateString()
             },
             {
-                id: "CVE-2024-5004",
-                description: "Information disclosure vulnerability in cloud storage API exposes sensitive configuration data.",
+                id: "CVE-2024-0004",
+                description: "Information disclosure vulnerability in cloud storage API.",
                 severity: "low",
                 score: 3.2,
-                published: yesterday
-            },
-            {
-                id: "CVE-2024-5005",
-                description: "Buffer overflow in network driver allows local privilege escalation on Linux systems.",
-                severity: "high",
-                score: 7.8,
-                published: today
+                published: new Date(Date.now() - 172800000).toLocaleDateString()
             }
         ];
     }
 
     /**
-     * Enhanced mock news data (fallback)
+     * Mock news data (fallback)
      */
     getMockNews() {
         return [
             {
-                title: "Major Healthcare Ransomware Attack Affects 100+ Hospitals",
-                summary: "Sophisticated ransomware campaign targets hospital systems across multiple countries, disrupting patient care and exposing sensitive medical data.",
-                source: "CyberSecurity Today",
-                time: "1 hour ago"
+                title: "Major Ransomware Group Targets Healthcare Sector",
+                summary: "New sophisticated ransomware campaign specifically targeting hospital systems and medical device networks detected by security researchers.",
+                source: "CyberSecNews",
+                time: "2 hours ago"
             },
             {
-                title: "Zero-Day Vulnerability Discovered in Popular VPN Client",
-                summary: "Security researchers identify critical authentication bypass vulnerability affecting millions of remote workers worldwide.",
-                source: "InfoSec Weekly",
-                time: "3 hours ago"
+                title: "Zero-Day Exploit Found in Popular VPN Software",
+                summary: "Critical vulnerability allows attackers to bypass authentication and gain unauthorized network access.",
+                source: "Security Weekly",
+                time: "4 hours ago"
             },
             {
-                title: "AI-Generated Phishing Emails Bypass Traditional Security",
-                summary: "Cybercriminals leverage advanced language models to create highly convincing phishing campaigns with 40% higher success rates.",
-                source: "ThreatIntel Report",
-                time: "5 hours ago"
+                title: "AI-Powered Phishing Attacks on the Rise",
+                summary: "Cybercriminals leveraging large language models to create more convincing phishing emails and social engineering attacks.",
+                source: "ThreatPost",
+                time: "6 hours ago"
             },
             {
-                title: "New Cryptocurrency Mining Malware Targets Cloud Infrastructure",
-                summary: "Advanced persistent threat group develops sophisticated malware specifically designed to compromise cloud computing resources.",
-                source: "Cloud Security News",
-                time: "7 hours ago"
-            },
-            {
-                title: "Supply Chain Attack Compromises 500+ Software Packages",
-                summary: "Coordinated attack on popular package repositories affects thousands of applications in what experts call the largest supply chain compromise of 2024.",
-                source: "DevSec Alert",
-                time: "9 hours ago"
-            },
-            {
-                title: "Nation-State Actors Target Critical Infrastructure",
-                summary: "Intelligence agencies warn of increased cyber attacks against power grids and water treatment facilities across multiple regions.",
-                source: "National Cyber Security",
-                time: "12 hours ago"
+                title: "New Malware Family Targets Cryptocurrency Wallets",
+                summary: "Advanced persistent threat group develops custom malware specifically designed to steal digital assets from hot wallets.",
+                source: "InfoSec News",
+                time: "8 hours ago"
             }
         ];
     }
-}
 
-// Initialize API when script loads
-let securityAPI;
-document.addEventListener('DOMContentLoaded', () => {
-    securityAPI = new SecurityAPI();
-});
+    /**
+     * Check if real API integration is available
+     */
+    hasRealAPIAccess() {
+        return !!this.newsApiKey;
+    }
+
+    /**
+     * Get API status for dashboard display
+     */
+    getAPIStatus() {
+        return {
+            cve: 'Active (CVE-Search)',
+            news: this.newsApiKey ? 'Active (NewsAPI)' : 'Mock Data',
+            hasRealNews: !!this.newsApiKey
+        };
+    }
+}
 
 // Export for use in main application
 if (typeof module !== 'undefined' && module.exports) {
